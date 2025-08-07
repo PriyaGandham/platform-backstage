@@ -1,79 +1,72 @@
-name: Build and Push Backstage
+name: build-backstage
 
 on:
   push:
     branches:
       - main
 
+permissions:
+  id-token: write
+  contents: write   # Required to commit updated deployment.yaml
+
 jobs:
   build:
     runs-on: ubuntu-latest
 
-    permissions:
-      id-token: write
-      contents: read
-
     env:
-      RESOURCE_GROUP: rg-aro-demo
-      KEYVAULT_NAME: myKeyVaultDemo2
-      IMAGE_NAME: backstage
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+    - name: Checkout source code
+      uses: actions/checkout@v4
 
-      - name: Azure Login via OIDC
-        uses: azure/login@v2
-        with:
-          client-id: ${{ vars.AZURE_CLIENT_ID }}
-          tenant-id: ${{ vars.AZURE_TENANT_ID }}
-          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+    - name: Set up Git user
+      run: |
+        git config user.name "ci-bot"
+        git config user.email "ci@ci.com"
 
-      - name: Get ACR credentials from Azure Key Vault
-        id: get-secrets
-        uses: azure/get-keyvault-secrets@v1
-        with:
-          keyvault:  'myKeyVaultDemo2'
-          secrets: ACR-LOGIN-SERVER,ACR-USERNAME,ACR-PASSWORD
+    - name: Login to Azure
+      uses: azure/login@v2
+      with:
+        client-id: ${{ env.AZURE_CLIENT_ID }}
+        tenant-id: ${{ env.AZURE_TENANT_ID }}
+        subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+        enable-AzPSSession: false
 
-      - name: Generate dynamic image tag
-        id: tag
-        run: echo "IMAGE_TAG=hello-$(date +%Y%m%d%H%M%S)" >> $GITHUB_ENV
+    - name: Fetch ACR credentials from Key Vault
+      id: get-secrets
+      uses: azure/get-keyvault-secrets@v1
+      with:
+        keyvault: 'myKeyVaultDemo2'
+        secrets: ACR-LOGIN-SERVER,ACR-USERNAME,ACR-PASSWORD
 
-      - name: Replace image tag in deployment.yml
-        run: |
-          sed -i "s|REPLACE_ME|${IMAGE_TAG}|" manifests/backstage/deployment.yml
-      
-      # 3. Commit and push updated YAML so ArgoCD will detect and deploy
-      - name: Commit and push updated deployment.yml
-        run: |
-          git config --global user.name "github-actions"
-          git config --global user.email "github-actions@github.com"
-          git add manifests/backstage/deployment.yml
-          git commit -m "Update image tag to $IMAGE_TAG"
-          git push
+    - name: Install Podman
+      run: |
+        sudo apt update
+        sudo apt install -y podman
 
-      - name: Install Podman
-        run: |
-          sudo apt update
-          sudo apt install -y podman
+    - name: Build container image with github.sha
+      run: |
+        podman build -t ${{ steps.get-secrets.outputs.ACR-LOGIN-SERVER }}/hello:${{ github.sha }} -f Dockerfile .
 
-      - name: Podman Login to ACR
-        uses: redhat-actions/podman-login@v1
-        with:
-          registry: ${{ steps.get-secrets.outputs.ACR-LOGIN-SERVER }}
-          username: ${{ steps.get-secrets.outputs.ACR-USERNAME }}
-          password: ${{ steps.get-secrets.outputs.ACR-PASSWORD }}
+    - name: Login to ACR
+      run: |
+        podman login ${{ steps.get-secrets.outputs.ACR-LOGIN-SERVER }} \
+          -u "${{ steps.get-secrets.outputs.ACR-USERNAME }}" \
+          -p "${{ steps.get-secrets.outputs.ACR-PASSWORD }}"
 
-      - name: Debug IMAGE_TAG
-        run: |
-          echo "Image Tag: $IMAGE_TAG"
-          echo "Full Image Name: ${{ steps.get-secrets.outputs.ACR-LOGIN-SERVER }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
+    - name: Push image to ACR
+      run: |
+        podman push ${{ steps.get-secrets.outputs.ACR-LOGIN-SERVER }}/hello:${{ github.sha }}
 
-      - name: Build Backstage image
-        run: |
-          podman build -t ${{ steps.get-secrets.outputs.ACR-LOGIN-SERVER }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} .
+    - name: Update deployment.yml with new image tag
+      run: |
+        sed -i "s|image: .*$|image: ${{ steps.get-secrets.outputs.ACR-LOGIN-SERVER }}/hello:${{ github.sha }}|" manifests/backstage/deployment.yml
 
-      - name: Push Backstage image to ACR
-        run: |
-          podman push ${{ steps.get-secrets.outputs.ACR-LOGIN-SERVER }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+    - name: Commit and push updated deployment.yml
+      run: |
+        git add manifests/backstage/deployment.yml
+        git commit -m "Update image tag to ${{ github.sha }}"
+        git push
