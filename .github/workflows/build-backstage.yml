@@ -13,6 +13,9 @@ jobs:
       id-token: write
       contents: read
 
+    env:
+      REGISTRY_NAME: arodemoregistry.azurecr.io  # Update if your ACR name is different
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -25,38 +28,43 @@ jobs:
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
       - name: Get ACR credentials from Azure Key Vault
-        id: get-secrets
+        id: GetSecrets
         uses: azure/keyvault@v1
         with:
-          keyvault: my-keyvault-name
+          keyvault: my-keyvault-name  # Replace with your actual Key Vault name
           secrets: ACR-USERNAME,ACR-PASSWORD,ACR-LOGIN-SERVER
 
-      - name: Set ACR credentials as env vars  # ✅ ADD THIS
+      - name: Set ACR environment variables
         run: |
-          echo "ACR_USERNAME=${{ steps.get-secrets.outputs.ACR-USERNAME }}" >> $GITHUB_ENV
-          echo "ACR_PASSWORD=${{ steps.get-secrets.outputs.ACR-PASSWORD }}" >> $GITHUB_ENV
-          echo "ACR_LOGIN_SERVER=${{ steps.get-secrets.outputs.ACR-LOGIN-SERVER }}" >> $GITHUB_ENV
+          echo "ACR_USERNAME=${{ steps.GetSecrets.outputs.ACR-USERNAME }}" >> $GITHUB_ENV
+          echo "ACR_PASSWORD=${{ steps.GetSecrets.outputs.ACR-PASSWORD }}" >> $GITHUB_ENV
+          echo "ACR_LOGIN_SERVER=${{ steps.GetSecrets.outputs.ACR-LOGIN-SERVER }}" >> $GITHUB_ENV
+          echo "IMAGE_TAG=build-${{ github.run_id }}" >> $GITHUB_ENV
 
       - name: Set up Podman
         uses: redhat-actions/podman-setup@v1
         with:
           version: '5.0.0'
 
-      - name: Podman Login to ACR
-        uses: redhat-actions/podman-login@v1
-        with:
-          registry: ${{ env.ACR_LOGIN_SERVER }}      # ✅ Now works because env is set
-          username: ${{ env.ACR_USERNAME }}
-          password: ${{ env.ACR_PASSWORD }}
-
-      - name: Build Backstage image with version + latest tag   # ✅ MODIFY
+      - name: Login to ACR via Podman
         run: |
-          TIMESTAMP=$(date +%s)
-          podman build -t $ACR_LOGIN_SERVER/backstage:$TIMESTAMP .
-          podman tag $ACR_LOGIN_SERVER/backstage:$TIMESTAMP $ACR_LOGIN_SERVER/backstage:latest
-          echo "IMAGE_TAG=$TIMESTAMP" >> $GITHUB_ENV
+          podman login $ACR_LOGIN_SERVER -u $ACR_USERNAME -p $ACR_PASSWORD
 
-      - name: Push both tags to ACR   # ✅ MODIFY
+      - name: Build and Tag Backstage image
+        run: |
+          podman build -t $ACR_LOGIN_SERVER/backstage:$IMAGE_TAG .
+          podman tag $ACR_LOGIN_SERVER/backstage:$IMAGE_TAG $ACR_LOGIN_SERVER/backstage:latest
+
+      - name: Push both tags to ACR
         run: |
           podman push $ACR_LOGIN_SERVER/backstage:$IMAGE_TAG
           podman push $ACR_LOGIN_SERVER/backstage:latest
+
+      - name: Write Build ID to file
+        run: echo $IMAGE_TAG > build-id.txt
+
+      - name: Upload Build ID Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-id
+          path: build-id.txt
