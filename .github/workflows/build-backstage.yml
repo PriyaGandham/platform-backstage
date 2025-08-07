@@ -1,0 +1,50 @@
+name: Build and Push Backstage
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Azure Login via OIDC
+        uses: azure/login@v1
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Get ACR credentials from Azure Key Vault
+        id: GetSecrets
+        uses: azure/keyvault@v1
+        with:
+          keyvault: my-keyvault-name
+          secrets: ACR-USERNAME,ACR-PASSWORD,ACR-LOGIN-SERVER
+
+      - name: Set up Podman
+        uses: redhat-actions/podman-setup@v1
+        with:
+          version: '5.0.0'
+
+      - name: Podman Login to ACR
+        uses: redhat-actions/podman-login@v1
+        with:
+          registry: ${{ env.ACR-LOGIN-SERVER }}
+          username: ${{ env.ACR-USERNAME }}
+          password: ${{ env.ACR-PASSWORD }}
+
+      - name: Build Backstage image
+        run: podman build -t ${{ env.ACR-LOGIN-SERVER }}/backstage:latest .
+
+      - name: Push to ACR
+        run: podman push ${{ env.ACR-LOGIN-SERVER }}/backstage:latest
