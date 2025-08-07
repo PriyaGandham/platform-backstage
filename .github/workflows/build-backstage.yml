@@ -25,11 +25,17 @@ jobs:
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
       - name: Get ACR credentials from Azure Key Vault
-        id: GetSecrets
+        id: get-secrets
         uses: azure/keyvault@v1
         with:
           keyvault: my-keyvault-name
           secrets: ACR-USERNAME,ACR-PASSWORD,ACR-LOGIN-SERVER
+
+      - name: Set ACR credentials as env vars  # ✅ ADD THIS
+        run: |
+          echo "ACR_USERNAME=${{ steps.get-secrets.outputs.ACR-USERNAME }}" >> $GITHUB_ENV
+          echo "ACR_PASSWORD=${{ steps.get-secrets.outputs.ACR-PASSWORD }}" >> $GITHUB_ENV
+          echo "ACR_LOGIN_SERVER=${{ steps.get-secrets.outputs.ACR-LOGIN-SERVER }}" >> $GITHUB_ENV
 
       - name: Set up Podman
         uses: redhat-actions/podman-setup@v1
@@ -39,12 +45,18 @@ jobs:
       - name: Podman Login to ACR
         uses: redhat-actions/podman-login@v1
         with:
-          registry: ${{ env.ACR-LOGIN-SERVER }}
-          username: ${{ env.ACR-USERNAME }}
-          password: ${{ env.ACR-PASSWORD }}
+          registry: ${{ env.ACR_LOGIN_SERVER }}      # ✅ Now works because env is set
+          username: ${{ env.ACR_USERNAME }}
+          password: ${{ env.ACR_PASSWORD }}
 
-      - name: Build Backstage image
-        run: podman build -t ${{ env.ACR-LOGIN-SERVER }}/backstage:latest .
+      - name: Build Backstage image with version + latest tag   # ✅ MODIFY
+        run: |
+          TIMESTAMP=$(date +%s)
+          podman build -t $ACR_LOGIN_SERVER/backstage:$TIMESTAMP .
+          podman tag $ACR_LOGIN_SERVER/backstage:$TIMESTAMP $ACR_LOGIN_SERVER/backstage:latest
+          echo "IMAGE_TAG=$TIMESTAMP" >> $GITHUB_ENV
 
-      - name: Push to ACR
-        run: podman push ${{ env.ACR-LOGIN-SERVER }}/backstage:latest
+      - name: Push both tags to ACR   # ✅ MODIFY
+        run: |
+          podman push $ACR_LOGIN_SERVER/backstage:$IMAGE_TAG
+          podman push $ACR_LOGIN_SERVER/backstage:latest
