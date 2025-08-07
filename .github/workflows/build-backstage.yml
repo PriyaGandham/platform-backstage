@@ -65,6 +65,11 @@ jobs:
           username: ${{ steps.get-secrets.outputs.ACR-USERNAME }}
           password: ${{ steps.get-secrets.outputs.ACR-PASSWORD }}
 
+      - name: Debug IMAGE_TAG
+        run: |
+          echo "Image Tag: $IMAGE_TAG"
+          echo "Full Image Name: ${{ steps.get-secrets.outputs.ACR-LOGIN-SERVER }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
+
       - name: Build Backstage image
         run: |
           podman build -t ${{ steps.get-secrets.outputs.ACR-LOGIN-SERVER }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} .
