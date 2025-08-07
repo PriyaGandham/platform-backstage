@@ -40,6 +40,19 @@ jobs:
         id: tag
         run: echo "IMAGE_TAG=hello-$(date +%Y%m%d%H%M%S)" >> $GITHUB_ENV
 
+      - name: Replace image tag in deployment.yaml
+        run: |
+          sed -i "s|REPLACE_ME|${IMAGE_TAG}|" manifests/backstage/deployment.yaml
+      
+      # 3. Commit and push updated YAML so ArgoCD will detect and deploy
+      - name: Commit and push updated deployment.yaml
+        run: |
+          git config --global user.name "github-actions"
+          git config --global user.email "github-actions@github.com"
+          git add manifests/backstage/deployment.yaml
+          git commit -m "Update image tag to $IMAGE_TAG"
+          git push
+
       - name: Install Podman
         run: |
           sudo apt update
